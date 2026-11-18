@@ -1,0 +1,192 @@
+"""Bảng nghiệm thu (mục 7 yêu cầu): mỗi test ánh xạ một hàng trong bảng."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import openpyxl
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from phieu_xaydung import pdf_tools, validate
+from phieu_xaydung.excel_source import (
+    detect_shift, is_template_name, phone_state, read_source_excel)
+from phieu_xaydung.export import build_workbook, verify_workbook
+from phieu_xaydung.layout import build_template
+from phieu_xaydung.matcher import match_rows
+from phieu_xaydung.models import HouseholdRow, Money, PhoneState
+from phieu_xaydung.pipeline import export_hamlet, process_hamlet, scan_dossier
+from phieu_xaydung.store import Store
+
+from conftest import FIX
+
+
+def test_template_layout_giong_mau_phu_hiep():
+    wb = build_template("An Bình")
+    ws = wb["Danh sách hộ"]
+    assert ws["A5"].value == "STT"
+    assert ws["B5"].value == "Họ tên chủ hộ"
+    assert ws["C5"].value == "Thực hiện Quý III/2026 (Triệu đồng)"
+    assert ws["C6"].value == "Tổng cộng" and ws["D6"].value == "Nhà ở"
+    assert ws["R5"].value.startswith("Hộ có XD")
+    assert ws["S5"].value == "Số điện thoại"
+    assert ws["T5"].value == "Chữ ký"
+    assert ws.column_dimensions["B"].width == 28
+    assert ws.column_dimensions["T"].width == 25
+    assert ws.max_row == 6  # trống, chưa có dữ liệu hộ
+
+
+def test_pdf_quyet_nguoc_stt_trung_thieu_stt_giu_du_dong():
+    """PDF quét ngược + STT trùng + dòng thiếu STT: giữ đủ dòng nguồn,
+    truy được trang gốc, không ghép nhầm chữ ký chỉ vì trùng STT."""
+    dossiers = scan_dossier(FIX)
+    assert len(dossiers) == 1
+    d = dossiers[0]
+    d.reversed_pdf = True
+    result = process_hamlet(d)
+    assert len(result.rows) == 32  # đủ 32 hộ nguồn
+    stts = [r.stt for r in result.rows]
+    assert stts.count(5) == 2      # STT 5 trùng 2 hộ
+    assert sum(1 for s in stts if s is None) == 1  # 1 hộ thiếu STT
+    # Ghi chú trùng STT phải có, và truy được row_id của cả 2 hộ.
+    dup = [n for n in result.notes if n.kind == "trung_lap"
+           and "STT 5" in n.reason]
+    assert dup and len(dup[0].row_ids) >= 2
+    # Trang gốc truy được: hộ đầu phải biết mình ở trang PDF nào.
+    assert all(r.pdf_page is not None for r in result.rows
+               if r.stt is not None)
+
+
+def test_sdt_giu_so_0_dang_text_phan_biet_trong_va_kho_doc():
+    rows = read_source_excel(str(FIX / "An-Binh.xlsx"))[0].rows
+    by_stt = {r.stt: r for r in rows if r.stt is not None}
+    # SĐT 9 số -> chưa đọc chắc, S trống + ghi chú (không giữ số sai).
+    bad = next(r for r in rows if r.phone_raw == "091234567")
+    assert bad.phone is None and bad.phone_state == PhoneState.UNREADABLE
+    # SĐT đọc được giữ nguyên dạng text, bắt đầu bằng 0.
+    good = by_stt[1]
+    assert good.phone and good.phone.startswith("0") and len(good.phone) == 10
+    # Phiếu bỏ trống phân biệt với có ghi nhưng chưa đọc chắc.
+    blank = next(r for r in rows if r.phone_state == PhoneState.BLANK_ON_FORM)
+    assert blank.phone is None
+    notes = validate.check_phones(rows)
+    assert any("khó đọc" in n.reason for n in notes)
+
+
+def test_excel_thieu_pdf_ten_mau_the_hien_pham_vi():
+    """Excel chỉ hộ có XD + tên mẫu: vẫn xử lý được phần có căn cứ,
+    thể hiện đúng phạm vi và phần cần bổ sung."""
+    dossiers = scan_dossier(FIX)
+    d = dossiers[0]
+    d.pdf_path = None  # giả lập thiếu PDF
+    result = process_hamlet(d)
+    assert result.scope == "construction_only"
+    assert any(n.kind == "pham_vi" for n in result.notes)
+    assert any("Chủ hộ" in n.reason for n in result.notes)  # tên mẫu
+    # Không có PDF -> chữ ký trống, ghi rõ.
+    assert all(r.pdf_page is None for r in result.rows)
+
+
+def test_tong_nam_khac_tong_hai_quy_giu_nguyen_so_nguon():
+    """Tổng năm khác QIII+QIV và tổng ghi tay khác tổng cộng dòng:
+    giữ nguyên số nguồn, báo đúng chênh lệch, không tự cân số."""
+    row = HouseholdRow(stt=1, name="Nguyễn Văn An")
+    row.q3.total, row.q3.nha_o = 30, 30
+    row.q4.total, row.q4.nha_o = 15, 15
+    row.year.total, row.year.nha_o = 100, 100  # 100 != 30+15
+    notes = validate.check_row(row)
+    # Không có ghi chú nào so sánh năm với QIII+QIV.
+    assert not any("QIII+QIV" in n.reason or "quý III + quý IV" in n.reason
+                   for n in notes)
+    # Trong kỳ lệch thì có ghi chú, giữ cả hai số.
+    row.year.total = 90
+    notes = validate.check_row(row)
+    assert any("khác tổng thành phần" in n.reason and "90" in n.reason
+               for n in notes)
+    # Tổng toàn ấp: ghi tay vs cộng dòng.
+    rows = [HouseholdRow(stt=i, name=f"Hộ {i}") for i in range(1, 4)]
+    for r in rows:
+        r.q3.total, r.q3.nha_o = 10, 10
+    notes = validate.check_totals(rows, {"q3": 40}, None)
+    assert any("chênh +10" in n.reason for n in notes)
+
+
+def test_gia_tri_lap_khong_tu_xoa_va_lech_cot_chi_canh_bao():
+    rows = []
+    for i in range(1, 6):
+        r = HouseholdRow(stt=i, name=f"Hộ {i}")
+        r.q3.total, r.q3.nha_o = 20, 20  # C=D: hợp lệ khi chỉ xây nhà ở
+        rows.append(r)
+    notes = validate.check_duplicate_values(rows)
+    assert notes  # có ghi chú hệ thống
+    assert "không tự xóa" in notes[0].reason
+    assert all(r.q3.total == 20 for r in rows)  # giá trị còn nguyên
+    # Lệch cột: phát hiện nhưng không tự dịch.
+    assert detect_shift([{"Q": "1", "R": "0912345678"},
+                         {"Q": "2", "R": "0987654321"},
+                         {"Q": "1", "R": "0901234567"}])
+
+
+def test_dong_lai_giu_nguyen_du_lieu_da_duyet_va_khung_chu_ky(tmp_path):
+    store = Store(tmp_path / "state.db")
+    row = HouseholdRow(stt=1, name="Nguyễn Văn An")
+    row.q3.total = 30
+    from phieu_xaydung.models import RowStatus
+    row.status = RowStatus.CONFIRMED
+    store.save_row("An Bình", row)
+    store.save_signature(row.row_id, 1, (100.0, 200.0, 180.0, 240.0),
+                         present=True, adjusted=True)
+    loaded = store.load_rows("An Bình")
+    assert len(loaded) == 1
+    assert loaded[0].status == RowStatus.CONFIRMED
+    assert loaded[0].q3.total == 30
+    sig = store.load_signature(row.row_id)
+    assert sig and sig["adjusted"] and sig["box"] == (100.0, 200.0, 180.0, 240.0)
+    # Nguồn đổi dưới ô đã duyệt -> đánh dấu kiểm tra lại.
+    store.save_file("x.xlsx", "aaa", "excel", 0.0)
+    store.mark_recheck_for_file("x.xlsx")
+    store.close()
+
+
+def test_chay_lai_cung_ho_so_0_goi_ai(tmp_path):
+    dossiers = scan_dossier(FIX)
+    d = dossiers[0]
+    d.reversed_pdf = True
+    store = Store(tmp_path / "state.db")
+    r1 = process_hamlet(d, store=store)
+    r2 = process_hamlet(d, store=store)  # chạy lại
+    assert r1.stats.ai_calls == 0 and r2.stats.ai_calls == 0
+    assert r1.stats.ai_tokens == 0 and r2.stats.ai_tokens == 0
+    assert len(r2.rows) == len(r1.rows)
+    store.close()
+
+
+def test_kiem_tra_file_excel_sau_khi_luu(tmp_path):
+    dossiers = scan_dossier(FIX)
+    d = dossiers[0]
+    d.reversed_pdf = True
+    result = process_hamlet(d)
+    path = export_hamlet(result, tmp_path)
+    assert path.exists()
+    check = verify_workbook(path)
+    assert check["ok"], check["errors"]
+    assert check["stats"]["so_hang_du_lieu"] == 32
+    # Mở lại bằng openpyxl: S là text, C:Q là số.
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Danh sách hộ"]
+    assert ws.cell(7, 19).number_format == "@"
+    assert isinstance(ws.cell(7, 3).value, (int, float, type(None)))
+    # Dòng tổng dùng SUM.
+    total_row = check["stats"]["dong_tong"]
+    assert str(ws.cell(total_row, 3).value).startswith("=SUM(")
+    wb.close()
+
+
+def test_matcher_khong_ghep_sai_khi_ten_khac_nhau():
+    excel = [HouseholdRow(stt=1, name="Nguyễn Văn An"),
+             HouseholdRow(stt=1, name="Trần Văn Bình")]
+    pdf = [HouseholdRow(stt=1, name="Nguyễn Văn An", pdf_page=1, pdf_row=0)]
+    pairs, _, _, notes = match_rows(excel, pdf)
+    assert len(pairs) == 1
+    assert pairs[0][0].name == "Nguyễn Văn An"

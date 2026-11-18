@@ -103,6 +103,16 @@ tờ** chứa tổng từng trang.
   ký, SĐT thật, file đã xử lý và khóa API đều nằm ngoài Git
   (xem `.gitignore`). Thư mục dữ liệu cục bộ: `data/`.
 
+> **Clone mới:** file PDF/Excel giả và file Excel mẫu là file nhị phân,
+> không có sẵn ngay sau khi clone. Chạy 2 lệnh để tạo lại:
+>
+> ```bat
+> .venv\Scripts\python tools\make_fake_data.py --out tests\fixtures\fake-dossier
+> .venv\Scripts\python -m phieu_xaydung.cli process tests\fixtures\fake-dossier --out examples\sample-output
+> ```
+>
+> Sau đó `python -m pytest tests/ -q` chạy xanh.
+
 ## Cấu trúc
 
 ```

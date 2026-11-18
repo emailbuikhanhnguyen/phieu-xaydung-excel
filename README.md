@@ -8,6 +8,22 @@ gọi API AI**.
 3.721 hộ). Phần tái sử dụng nhiều nhất: nhận diện bảng, ghép đúng dòng
 hộ, nhập đúng cột tiền, cắt chữ ký, kiểm tra file Excel trước khi xuất.
 
+## Dùng trên web (không cần cài đặt)
+
+Bản web chạy trên Streamlit Cloud — mở link là dùng được, không cần
+cài Python. Xem [docs/TRIEN_KHAI_WEB.md](docs/TRIEN_KHAI_WEB.md)
+để triển khai từ repo này (miễn phí, vài phút).
+
+Trên bản web, chọn chế độ **Tải file lên**: upload PDF + Excel nguồn
+của đợt, bấm Xử lý, duyệt từng hộ như bản local, rồi tải file Excel
+kết quả về máy. Có nút **Thử ngay với dữ liệu giả** để xem tool chạy
+thế nào mà không cần chuẩn bị file.
+
+Lưu ý: bản web xử lý ngay trong phiên làm việc và không lưu lại sau
+khi đóng tab — tải file kết quả về trước khi đóng. Hồ sơ thật có SĐT
+và chữ ký sẽ được upload lên máy chủ Streamlit Cloud, không còn chạy
+hoàn toàn trên máy mình nữa — cân nhắc trước khi dùng cho dữ liệu thật.
+
 ## Chạy trên Windows (lần đầu)
 
 1. Cài Python 3.11+ từ https://www.python.org/downloads/

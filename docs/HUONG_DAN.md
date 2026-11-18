@@ -1,5 +1,19 @@
 # Hướng dẫn sử dụng — phieu-xaydung-excel
 
+## 0. Dùng trên web hay trên máy?
+
+- **Trên web (không cần cài):** mở link app Streamlit, chọn chế độ
+  **Tải file lên**, upload PDF + Excel nguồn của đợt, bấm Xử lý, duyệt
+  từng hộ, rồi tải file Excel kết quả về máy. Có nút **Thử ngay với dữ
+  liệu giả** để xem tool chạy thế nào. Tiến độ chỉ giữ trong lúc tab
+  còn mở — tải kết quả về trước khi đóng tab. Cách triển khai bản web:
+  xem [TRIEN_KHAI_WEB.md](TRIEN_KHAI_WEB.md).
+- **Trên máy Windows:** làm theo các mục dưới đây (chọn thư mục hồ sơ,
+  tiến độ lưu SQLite, mở lại tiếp tục đúng vị trí).
+
+Các mục 1–8 dưới đây mô tả chung cho cả hai chế độ; khác biệt duy
+nhất là cách nạp hồ sơ (mục 1) và cách lấy file kết quả (mục 5).
+
 ## 1. Chuẩn bị thư mục hồ sơ
 
 Mỗi đợt phiếu là một thư mục, chứa PDF quét và Excel nguồn (nếu có).
@@ -90,6 +104,10 @@ Bấm **Xuất Excel + kiểm tra**. Mỗi ấp ra 1 file trong thư mục xuấ
 ```
 Phieu_Thu_Thap_Xay_Dung_Ap_Dong_Nam_Q4_2026.xlsx
 ```
+
+- **Trên web:** bấm nút tải từng file (hoặc tải tất cả dạng ZIP) ngay
+  sau khi xuất — đóng tab là mất file.
+- **Trên máy:** file nằm trong thư mục xuất đã chọn.
 
 File có 4 sheet: **Danh sách hộ**, **Bản quét** (ảnh toàn trang),
 **Cần đối chiếu**, **Tổng hợp theo tờ**. Tool tự kiểm tra trước khi

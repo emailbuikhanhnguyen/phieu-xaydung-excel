@@ -79,3 +79,7 @@ từ ảnh phiếu. Tool không tự đoán số liệu chưa có căn cứ.
 - Python 3.12.3, PyMuPDF 2.1, openpyxl, Pillow, numpy, streamlit 1.67.0,
   pytest (Linux VM).
 - Giao diện Streamlit smoke-test: `healthz` trả 200, trang chủ tải được.
+- **Kiểm thử bản web (AppTest, `tools/test_web_app.py`): PASS** —
+  mở app thấy radio 2 chế độ; nút dữ liệu giả nạp được 1 ấp;
+  upload 2 file giả (PDF + Excel) nạp được 1 ấp; xử lý ra 32 hộ;
+  lưu 1 hộ sang hộ tiếp theo; xuất Excel đạt + có nút tải file.

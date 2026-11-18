@@ -1,17 +1,31 @@
-"""Giao diện Streamlit — chạy cục bộ trên Windows (run.bat).
+"""Giao diện Streamlit — chạy cục bộ trên Windows (run.bat) hoặc trên web
+(Streamlit Cloud: mở link là dùng được).
 
-Luồng: 1) chọn thư mục hồ sơ -> 2) kiểm tra ghép file theo ấp ->
+Hai chế độ:
+  - "Tải file lên (dùng trên web)": upload PDF + Excel nguồn qua trình
+    duyệt, xử lý ngay trong phiên làm việc, tải file kết quả về máy.
+    Tiến độ duyệt được giữ trong lúc tab còn mở; đóng tab là mất
+    (tải file kết quả về trước khi đóng).
+  - "Thư mục trên máy (chạy local)": chọn thư mục hồ sơ trên máy
+    (có thể là thư mục Google Drive đã đồng bộ), tiến độ lưu trong
+    SQLite tại thư mục hồ sơ, đóng/mở lại tiếp tục đúng vị trí.
+
+Luồng chung: 1) nạp hồ sơ -> 2) kiểm tra ghép file theo ấp ->
 3) bấm Xử lý -> 4) duyệt từng ô kèm ảnh đúng dòng/ô trên phiếu ->
-5) Xuất Excel kèm kết quả kiểm tra. Đóng rồi mở lại vẫn tiếp tục đúng
-vị trí đã làm (tiến độ lưu trong SQLite).
+5) Xuất Excel kèm kết quả kiểm tra. Không gọi AI.
 """
 
 from __future__ import annotations
 
+import io
+import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import fitz  # noqa: E402
 import streamlit as st  # noqa: E402
@@ -25,28 +39,71 @@ from phieu_xaydung.pipeline import (  # noqa: E402
 from phieu_xaydung.store import Store  # noqa: E402
 
 st.set_page_config(page_title="Phiếu xây dựng -> Excel", layout="wide")
-st.title("Phiếu xây dựng -> Excel  (chạy cục bộ, không gọi AI)")
-st.caption(f"Phiên bản {__version__} — mọi xử lý chạy trên máy, 0 lần gọi AI.")
+st.title("Phiếu xây dựng -> Excel")
+st.caption(f"Phiên bản {__version__} — mọi xử lý chạy bằng code, 0 lần gọi AI.")
 
-if "dossier_dir" not in st.session_state:
-    st.session_state.dossier_dir = ""
-if "results" not in st.session_state:
-    st.session_state.results = {}
-if "review_idx" not in st.session_state:
-    st.session_state.review_idx = {}
+for key, default in (("work_dir", ""), ("results", {}),
+                     ("review_idx", {}), ("dossiers", []),
+                     ("exported", [])):
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-folder = st.text_input(
-    "Thư mục hồ sơ (có thể là thư mục Google Drive đã đồng bộ xuống máy)",
-    value=st.session_state.dossier_dir,
-    placeholder=r"C:\Users\Nguyen\Drive\lan 2")
-if st.button("Quét thư mục"):
-    st.session_state.dossier_dir = folder
-    st.session_state.dossiers = scan_dossier(folder)
-    st.session_state.results = {}
+mode = st.radio(
+    "Chế độ",
+    ["Tải file lên (dùng trên web)", "Thư mục trên máy (chạy local)"],
+    horizontal=True)
+is_web = mode.startswith("Tải file lên")
 
+if is_web:
+    uploads = st.file_uploader(
+        "Chọn PDF và Excel nguồn của đợt (nhiều file, mỗi file tối đa 200MB)",
+        type=["pdf", "xlsx", "xls"], accept_multiple_files=True)
+    c1, c2 = st.columns(2)
+    if c1.button("Nạp file đã chọn", type="primary", disabled=not uploads):
+        tmp = Path(tempfile.mkdtemp(prefix="phieu-web-"))
+        for f in uploads:
+            (tmp / f.name).write_bytes(f.getbuffer())
+        st.session_state.work_dir = str(tmp)
+        st.session_state.dossiers = scan_dossier(tmp)
+        st.session_state.results = {}
+        st.session_state.exported = []
+        st.rerun()
+    if c2.button("Thử ngay với dữ liệu giả (ấp An Bình, 32 hộ)"):
+        tmp = Path(tempfile.mkdtemp(prefix="phieu-demo-"))
+        fake = tmp / "fake-dossier"
+        fake.mkdir()
+        subprocess.run(
+            [sys.executable,
+             str(REPO_ROOT / "tools" / "make_fake_data.py"),
+             "--out", str(fake)], check=True)
+        st.session_state.work_dir = str(fake)
+        st.session_state.dossiers = scan_dossier(fake)
+        st.session_state.results = {}
+        st.session_state.exported = []
+        st.rerun()
+    st.info("Lưu ý khi dùng trên web: file được xử lý ngay trong phiên làm "
+            "việc này và không lưu lại sau khi đóng tab — hãy tải file kết "
+            "quả về máy trước khi đóng. Đừng tải lên hồ sơ thật có SĐT/chữ "
+            "ký nếu chưa chắc chắn về nơi lưu trữ của máy chủ web.")
+else:
+    folder = st.text_input(
+        "Thư mục hồ sơ (có thể là thư mục Google Drive đã đồng bộ xuống máy)",
+        value=st.session_state.work_dir,
+        placeholder=r"C:\Users\Nguyen\Drive\lan 2")
+    if st.button("Quét thư mục"):
+        st.session_state.work_dir = folder
+        st.session_state.dossiers = scan_dossier(folder)
+        st.session_state.results = {}
+        st.session_state.exported = []
+
+work_dir = Path(st.session_state.work_dir) if st.session_state.work_dir else None
 dossiers = st.session_state.get("dossiers", [])
 if not dossiers:
-    st.info("Nhập thư mục hồ sơ rồi bấm Quét thư mục để bắt đầu.")
+    if is_web:
+        st.info("Tải file PDF/Excel lên rồi bấm Nạp file đã chọn — hoặc bấm "
+                "Thử ngay với dữ liệu giả để xem tool chạy thế nào.")
+    else:
+        st.info("Nhập thư mục hồ sơ rồi bấm Quét thư mục để bắt đầu.")
     st.stop()
 
 st.subheader("1. Danh sách ấp — kiểm tra ghép file")
@@ -58,10 +115,14 @@ for d in dossiers:
     d.reversed_pdf = c4.checkbox("PDF quét ngược", value=d.reversed_pdf,
                                  key=f"rev-{d.name}")
 
-out_dir = st.text_input("Thư mục xuất kết quả",
-                        value=str(Path(folder) / "ket-qua") if folder else "")
+if is_web:
+    out_dir = work_dir / "ket-qua"
+else:
+    out_dir = st.text_input("Thư mục xuất kết quả",
+                            value=str(Path(work_dir) / "ket-qua"))
+
 if st.button("Xử lý tất cả", type="primary"):
-    store = Store(Path(folder) / ".phieu-xaydung" / "state.db")
+    store = Store(work_dir / ".phieu-xaydung" / "state.db")
     progress = st.progress(0.0)
     for i, d in enumerate(dossiers):
         result = process_hamlet(d, store=store)
@@ -155,7 +216,7 @@ if rows:
             row.phone = phone or None
             row.status = (RowStatus.NEEDS_REVIEW if flagged
                           else RowStatus.CONFIRMED)
-            store = Store(Path(folder) / ".phieu-xaydung" / "state.db")
+            store = Store(work_dir / ".phieu-xaydung" / "state.db")
             store.save_row(hamlet, row)
             store.close()
             if note:
@@ -165,11 +226,34 @@ if rows:
 
 st.subheader("3. Xuất Excel")
 if st.button("Xuất Excel + kiểm tra", type="primary"):
-    store = Store(Path(folder) / ".phieu-xaydung" / "state.db")
+    store = Store(work_dir / ".phieu-xaydung" / "state.db")
+    exported = []
     for name, res in results.items():
         path = export_hamlet(res, out_dir)
         check = verify_workbook(path)
         st.write(f"**{name}** -> {path.name} — "
                  f"{'ĐẠT' if check['ok'] else 'CÓ LỖI: ' + '; '.join(check['errors'])}")
+        exported.append(str(path))
     store.close()
-    st.success("Xong. Mở thư mục xuất kết quả để xem file.")
+    st.session_state.exported = exported
+    if is_web:
+        st.success("Xong — tải file kết quả về máy bên dưới trước khi đóng tab.")
+    else:
+        st.success("Xong. Mở thư mục xuất kết quả để xem file.")
+
+if st.session_state.exported:
+    st.subheader("Tải file kết quả")
+    paths = [Path(p) for p in st.session_state.exported if Path(p).exists()]
+    if len(paths) > 1:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in paths:
+                zf.write(p, arcname=p.name)
+        st.download_button("Tải tất cả (ZIP)", buf.getvalue(),
+                           file_name="phieu-xaydung-ket-qua.zip",
+                           mime="application/zip")
+    for p in paths:
+        st.download_button(f"Tải {p.name}", p.read_bytes(),
+                           file_name=p.name,
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"dl-{p.name}")

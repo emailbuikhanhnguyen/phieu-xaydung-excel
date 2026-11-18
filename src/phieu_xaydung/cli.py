@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from phieu_xaydung import __version__
+from phieu_xaydung import __version__, build_version
 from phieu_xaydung.export import verify_workbook
 from phieu_xaydung.pipeline import export_hamlet, process_hamlet, scan_dossier
 from phieu_xaydung.store import Store
@@ -67,7 +67,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="phieu-xaydung",
         description="Chuyển phiếu xây dựng PDF/Excel thành Excel chuẩn (chạy cục bộ, không gọi AI).")
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {build_version()}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("scan", help="Liệt kê các ấp trong thư mục hồ sơ.")

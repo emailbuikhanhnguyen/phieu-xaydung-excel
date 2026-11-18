@@ -279,3 +279,28 @@ def test_xoa_dong_giu_cho_chay_lai_khong_tao_lai(tmp_path):
     assert all((r.pdf_page, r.pdf_row) != (victim.pdf_page, victim.pdf_row)
                for r in r2.rows)
     store.close()
+
+
+def test_phien_ban_tu_tang_theo_commit():
+    """Số phiên bản tự tăng theo mỗi lần deploy: 0.1.<số commit> (<sha>).
+    Không đọc được git thì về lại __version__."""
+    import subprocess
+    from phieu_xaydung import __version__, _git_build, build_version
+    info = _git_build()
+    assert info is not None  # chạy trong repo git
+    count, sha = info
+    assert count >= 4 and len(sha) >= 7
+    assert build_version() == f"0.1.{count} ({sha})"
+    # Đối chiếu độc lập bằng git: số commit phải khớp.
+    n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
+                       cwd=Path(__file__).resolve().parents[1],
+                       capture_output=True, text=True, check=True)
+    assert count == int(n.stdout.strip())
+    # Fallback khi không có git.
+    import phieu_xaydung
+    old = phieu_xaydung._git_build
+    phieu_xaydung._git_build = lambda: None
+    try:
+        assert build_version() == __version__
+    finally:
+        phieu_xaydung._git_build = old

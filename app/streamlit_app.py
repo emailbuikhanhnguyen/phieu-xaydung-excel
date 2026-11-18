@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 import fitz  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from phieu_xaydung import __version__  # noqa: E402
+from phieu_xaydung import __version__, build_version  # noqa: E402
 from phieu_xaydung import pdf_tools  # noqa: E402
 from phieu_xaydung.export import verify_workbook  # noqa: E402
 from phieu_xaydung.models import HouseholdRow, Provenance, RowStatus  # noqa: E402
@@ -40,7 +40,7 @@ from phieu_xaydung.store import Store  # noqa: E402
 
 st.set_page_config(page_title="Phiếu xây dựng -> Excel", layout="wide")
 st.title("Phiếu xây dựng -> Excel")
-st.caption(f"Phiên bản {__version__} — mọi xử lý chạy bằng code, 0 lần gọi AI.")
+st.caption(f"Phiên bản {build_version()} — mọi xử lý chạy bằng code, 0 lần gọi AI.")
 
 for key, default in (("work_dir", ""), ("results", {}),
                      ("review_idx", {}), ("dossiers", []),

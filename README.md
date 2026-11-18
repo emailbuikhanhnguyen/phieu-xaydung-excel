@@ -19,6 +19,11 @@ của đợt, bấm Xử lý, duyệt từng hộ như bản local, rồi tải 
 kết quả về máy. Có nút **Thử ngay với dữ liệu giả** để xem tool chạy
 thế nào mà không cần chuẩn bị file.
 
+Số phiên bản hiện dưới tiêu đề đầu trang, dạng `0.1.<số commit> (<mã
+commit>)` — tự tăng theo mỗi lần đẩy code lên GitHub (mỗi lần deploy
+Streamlit Cloud tự cập nhật theo), khỏi cần sửa tay. Xem `build_version()`
+trong `src/phieu_xaydung/__init__.py`; số gốc `0.1.0` giữ ở `__version__`.
+
 Lưu ý: bản web xử lý ngay trong phiên làm việc và không lưu lại sau
 khi đóng tab — tải file kết quả về trước khi đóng. Hồ sơ thật có SĐT
 và chữ ký sẽ được upload lên máy chủ Streamlit Cloud, không còn chạy

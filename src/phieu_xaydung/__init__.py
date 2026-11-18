@@ -79,3 +79,61 @@ def build_version() -> str:
     if info.get("count") is not None:
         return f"{base}.{info['count']} ({info['sha']}){when}"
     return f"{info['sha']}{when}"
+
+
+# --- Nạp lại module khi code trên đĩa đổi (PXD-001) -----------------------
+#
+# Streamlit Cloud chỉ git pull rồi chạy lại script trong cùng tiến trình
+# Python: module trong src/ đã nằm trong sys.modules từ lần deploy trước
+# nên import thường sẽ lấy bản CŨ. Nhưng nạp lại VÔ ĐIỀU KIỆN ở mỗi rerun
+# cũng sai: reload(models) tạo ra enum RowStatus MỚI, trong khi
+# st.session_state.results vẫn giữ HouseholdRow có status thuộc RowStatus
+# CŨ — enum so sánh theo identity nên `r.status != RowStatus.CONFIRMED`
+# luôn đúng. Vì vậy chỉ nạp lại khi code trên đĩa thật sự đổi.
+
+_RELOAD_ORDER = ("models", "pdf_tools", "layout", "excel_source",
+                 "matcher", "validate", "export", "store", "pipeline")
+
+# Dấu của code đã nạp: (tên file, mtime_ns, size) của src/phieu_xaydung/*.py.
+_loaded_sig: tuple | None = None
+
+
+def _source_signature() -> tuple | None:
+    """Dấu hiện tại của code trên đĩa — None khi không đọc được thư mục."""
+    try:
+        pkg_dir = Path(__file__).resolve().parent
+        return tuple(
+            (p.name, p.stat().st_mtime_ns, p.stat().st_size)
+            for p in sorted(pkg_dir.glob("*.py")))
+    except OSError:
+        return None
+
+
+def ensure_fresh_modules() -> bool:
+    """Nạp lại module src/ NẾU code trên đĩa đã đổi so với lần nạp trước.
+
+    Trả về True khi vừa nạp lại (app cần xóa results/review_idx trong
+    session_state vì các object cũ — vd RowStatus — không còn đúng nữa),
+    False khi code không đổi (không reload gì, enum giữ nguyên identity).
+    Lần đầu chạy trong một tiến trình mới chỉ ghi nhận dấu, không reload
+    vì mọi import sau đó đều đọc code mới từ đĩa.
+    """
+    import importlib
+    import sys
+
+    sig = _source_signature()
+    if sig is None:
+        return False
+    loaded = getattr(sys.modules.get(__name__), "_loaded_sig", None)
+    if loaded is None:
+        sys.modules[__name__]._loaded_sig = sig
+        return False
+    if sig == loaded:
+        return False
+    for name in _RELOAD_ORDER:
+        mod = sys.modules.get(f"phieu_xaydung.{name}")
+        if mod is not None:
+            importlib.reload(mod)
+    importlib.reload(sys.modules[__name__])
+    sys.modules[__name__]._loaded_sig = sig
+    return True

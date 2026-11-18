@@ -340,11 +340,13 @@ def test_phien_ban_that_khop_git_that():
     assert v.startswith("0.1.") and sha in v
 
 
-def test_reload_lay_ban_moi_khi_file_doi(tmp_path, monkeypatch):
-    """PXD-001: mô phỏng deploy mới trong cùng tiến trình — file trên đĩa
-    đổi nhưng sys.modules còn bản cũ; chạy đúng trình tự nạp lại của app
-    (module con trước, package sau) thì code mới phải có hiệu lực."""
-    import importlib
+import contextlib
+
+
+@contextlib.contextmanager
+def _package_copy(tmp_path, monkeypatch):
+    """Copy src/phieu_xaydung sang thư mục tạm rồi import bản copy, để
+    mô phỏng deploy mới trong cùng tiến trình mà không chạm code thật."""
     import shutil
     import sys
     src = Path(__file__).resolve().parents[1] / "src" / "phieu_xaydung"
@@ -357,27 +359,40 @@ def test_reload_lay_ban_moi_khi_file_doi(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     try:
         import phieu_xaydung
-        assert phieu_xaydung.__version__ == "0.1.0"
-        # Giả lập deploy mới: sửa file trên đĩa.
-        init = copy / "__init__.py"
-        init.write_text(init.read_text(encoding="utf-8").replace(
-            '__version__ = "0.1.0"', '__version__ = "9.9.9"'),
-            encoding="utf-8")
-        # Không nạp lại: vẫn bản cũ (đúng lỗi gặp trên Streamlit Cloud).
-        assert phieu_xaydung.__version__ == "0.1.0"
-        # Đúng trình tự của app: module con trước, package sau.
-        from phieu_xaydung import (excel_source, export, layout, matcher,
-                                   models, pdf_tools, pipeline, store,
-                                   validate)
-        for _mod in (models, pdf_tools, layout, excel_source, matcher,
-                     validate, export, store, pipeline):
-            importlib.reload(_mod)
-        importlib.reload(phieu_xaydung)
-        assert phieu_xaydung.__version__ == "9.9.9"
-        from phieu_xaydung import build_version
-        assert build_version().startswith("9.9.")
+        yield phieu_xaydung, copy
     finally:
         for k in list(sys.modules):
             if k == "phieu_xaydung" or k.startswith("phieu_xaydung."):
                 del sys.modules[k]
         sys.modules.update(saved)
+
+
+def test_ensure_khong_reload_khi_file_khong_doi(tmp_path, monkeypatch):
+    """PXD-001 (1): chạy khối nạp 2 lần khi file không đổi thì RowStatus
+    vẫn là cùng object (is) — không reload gì."""
+    with _package_copy(tmp_path, monkeypatch) as (pkg, _):
+        from phieu_xaydung import models
+        rs_before = models.RowStatus
+        assert pkg.ensure_fresh_modules() is False
+        assert pkg.ensure_fresh_modules() is False
+        from phieu_xaydung import models as models2
+        assert models2.RowStatus is rs_before
+
+
+def test_ensure_reload_dung_1_lan_khi_file_doi(tmp_path, monkeypatch):
+    """PXD-001 (2): đổi file thì reload đúng 1 lần và ra __version__ mới;
+    gọi lại lần nữa thì không reload thêm."""
+    with _package_copy(tmp_path, monkeypatch) as (pkg, copy):
+        from phieu_xaydung import models
+        rs_before = models.RowStatus
+        assert pkg.ensure_fresh_modules() is False  # ghi nhận dấu lần đầu
+        init = copy / "__init__.py"
+        init.write_text(init.read_text(encoding="utf-8").replace(
+            '__version__ = "0.1.0"', '__version__ = "9.9.9"'),
+            encoding="utf-8")
+        assert pkg.ensure_fresh_modules() is True  # reload 1 lần
+        assert pkg.__version__ == "9.9.9"
+        assert pkg.build_version().startswith("9.9.")
+        from phieu_xaydung import models as models2
+        assert models2.RowStatus is not rs_before  # enum đã nạp lại
+        assert pkg.ensure_fresh_modules() is False  # lần sau không reload

@@ -32,28 +32,24 @@ import streamlit as st  # noqa: E402
 
 # Streamlit Cloud chỉ git pull rồi chạy lại script trong cùng tiến trình
 # Python: module trong src/ đã nằm trong sys.modules từ lần deploy trước
-# nên `from phieu_xaydung import ...` sẽ lấy bản CŨ mà không đọc lại file
-# (lỗi ImportError sau deploy 684e52b5). Nạp lại tường minh từng module
-# con theo thứ tự phụ thuộc, rồi mới nạp lại package, để bản deploy sau
-# không bị trộn code cũ với mới.
-import importlib  # noqa: E402
+# nên import thường sẽ lấy bản CŨ (lỗi ImportError sau deploy 684e52b5).
+# ensure_fresh_modules() chỉ nạp lại khi code trên đĩa thật sự đổi — nạp
+# lại vô điều kiện ở mỗi rerun sẽ tạo enum RowStatus mới trong khi
+# session_state vẫn giữ RowStatus cũ (so sánh enum theo identity).
 import phieu_xaydung  # noqa: E402
-from phieu_xaydung import (  # noqa: E402
-    excel_source, export, layout, matcher, models, pdf_tools, pipeline,
-    store, validate)
-for _mod in (models, pdf_tools, layout, excel_source, matcher, validate,
-             export, store, pipeline):
-    importlib.reload(_mod)
-importlib.reload(phieu_xaydung)
+_CODE_CHANGED = phieu_xaydung.ensure_fresh_modules()  # noqa: E402
 
 from phieu_xaydung import build_version  # noqa: E402
+from phieu_xaydung import pdf_tools  # noqa: E402
 from phieu_xaydung.export import verify_workbook  # noqa: E402
 from phieu_xaydung.models import HouseholdRow, Provenance, RowStatus  # noqa: E402
 from phieu_xaydung.pipeline import (  # noqa: E402
     export_hamlet, process_hamlet, scan_dossier)
 from phieu_xaydung.store import Store  # noqa: E402
 
-_VERSION = build_version()  # tính 1 lần khi app khởi động
+_VERSION = build_version()  # chạy mỗi rerun (chỉ vài lệnh git, rẻ) để số
+# phiên bản luôn đúng ngay sau deploy; không cache vì tiến trình không
+# khởi động lại khi Streamlit Cloud deploy bản mới.
 
 st.set_page_config(page_title="Phiếu xây dựng -> Excel", layout="wide")
 st.title("Phiếu xây dựng -> Excel")
@@ -65,6 +61,16 @@ for key, default in (("work_dir", ""), ("results", {}),
                      ("exported", [])):
     if key not in st.session_state:
         st.session_state[key] = default
+
+if _CODE_CHANGED:
+    # Code vừa đổi dưới chân kết quả đang duyệt: các object cũ (vd enum
+    # RowStatus) không còn đúng nữa — xóa kết quả, giữ lại hồ sơ đã nạp
+    # để người dùng chỉ cần bấm Xử lý tất cả chạy lại.
+    st.session_state["results"] = {}
+    st.session_state["review_idx"] = {}
+    st.session_state["exported"] = []
+    st.warning("Code trên máy chủ vừa cập nhật — bấm Xử lý tất cả để "
+               "chạy lại với bản mới.")
 
 mode = st.radio(
     "Chế độ",

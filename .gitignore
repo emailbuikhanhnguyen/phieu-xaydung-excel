@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Du lieu that — KHONG dua len Git
+data/
+*.pdf
+*.xlsx
+*.xls
+# ... tru du lieu GIA dung cho test va vi du (ten, SDT, chu ky deu gia)
+!tests/fixtures/fake-dossier/*.pdf
+!tests/fixtures/fake-dossier/*.xlsx
+!examples/sample-output/*.xlsx
+
+# Trang thai cuc bo (SQLite, anh cat tam)
+.phieu-xaydung/
+*.db
+*.db-journal
+
+# He dieu hanh / bien tap
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

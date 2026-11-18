@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phieu-xaydung-excel"
+version = "0.1.0"
+description = "Chuyen phieu thu thap thong tin xay dung (PDF/Excel) thanh file Excel chuan — chay cuc bo, khong goi AI."
+requires-python = ">=3.11"
+dependencies = [
+    "PyMuPDF>=1.24",
+    "openpyxl>=3.1",
+    "Pillow>=10.0",
+    "numpy>=1.26",
+    "streamlit>=1.36",
+]
+
+[project.scripts]
+phieu-xaydung = "phieu_xaydung.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -33,7 +33,7 @@ import streamlit as st  # noqa: E402
 from phieu_xaydung import __version__  # noqa: E402
 from phieu_xaydung import pdf_tools  # noqa: E402
 from phieu_xaydung.export import verify_workbook  # noqa: E402
-from phieu_xaydung.models import RowStatus  # noqa: E402
+from phieu_xaydung.models import HouseholdRow, Provenance, RowStatus  # noqa: E402
 from phieu_xaydung.pipeline import (  # noqa: E402
     export_hamlet, process_hamlet, scan_dossier)
 from phieu_xaydung.store import Store  # noqa: E402
@@ -162,6 +162,16 @@ if rows:
     row = rows[idx]
     st.write(f"Hộ {idx + 1}/{len(rows)} — STT {row.stt} — "
              f"trạng thái: {row.status.value}")
+    if st.button("Thêm hộ mới (trang ít hộ, dòng bị thiếu)"):
+        new_row = HouseholdRow(status=RowStatus.NEEDS_REVIEW)
+        new_row.sources["pdf"] = Provenance(
+            "nhap-tay", "Thêm tay ở màn hình duyệt")
+        rows.append(new_row)
+        store = Store(work_dir / ".phieu-xaydung" / "state.db")
+        store.save_row(hamlet, new_row)
+        store.close()
+        st.session_state.review_idx[hamlet] = len(rows) - 1
+        st.rerun()
 
     # Ảnh đúng dòng trên phiếu (nếu có PDF + vị trí dòng).
     if result.dossier.pdf_path and row.pdf_page:
@@ -194,6 +204,9 @@ if rows:
         st.warning("Ấp này thiếu PDF — chỉ duyệt được theo Excel nguồn.")
 
     with st.form(f"edit-{row.row_id}"):
+        stt_val = st.number_input("STT theo phiếu (0 = phiếu không ghi STT)",
+                                  min_value=0, step=1,
+                                  value=row.stt if row.stt is not None else 0)
         name = st.text_input("Họ tên chủ hộ", value=row.name or "")
         c1, c2, c3 = st.columns(3)
         q3 = c1.number_input("Tổng Quý III", value=row.q3.total or 0.0, step=5.0)
@@ -204,10 +217,20 @@ if rows:
         phone = st.text_input("Số điện thoại (S)", value=row.phone or "")
         note = st.text_input("Ghi chú đối chiếu (để trống nếu không có)",
                              value="")
-        col_save, col_flag = st.columns(2)
+        col_save, col_flag, col_del = st.columns(3)
         saved = col_save.form_submit_button("Lưu & sang hộ tiếp theo (Enter)")
         flagged = col_flag.form_submit_button("Đánh dấu cần đối chiếu")
+        deleted = col_del.form_submit_button("Xóa dòng này")
+        if deleted:
+            store = Store(work_dir / ".phieu-xaydung" / "state.db")
+            store.delete_row(row.row_id, hamlet)
+            store.close()
+            result.rows.pop(idx)
+            st.session_state.review_idx[hamlet] = max(
+                0, min(idx, len(result.rows) - 1))
+            st.rerun()
         if saved or flagged:
+            row.stt = int(stt_val) if stt_val > 0 else None
             row.name = name or None
             row.q3.total = q3 or None
             row.q4.total = q4 or None

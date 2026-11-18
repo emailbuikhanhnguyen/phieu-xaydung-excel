@@ -74,7 +74,36 @@ từ ảnh phiếu. Tool không tự đoán số liệu chưa có căn cứ.
 4. **Chưa test hiệu năng toàn bộ 127 trang** — chạy thử 3 trang mất ~13
    giây (chủ yếu dò lưới raster ~1,5 giây/trang).
 
-## 4. Môi trường kiểm thử
+## 4. Lỗi phát hiện khi user chạy thật trên web (18/11, ấp Tây Lộc)
+
+User upload chỉ PDF quét Tây Lộc (16 trang, không Excel nguồn) lên bản
+web: file xuất ra **0 hộ + Excel báo circular reference**.
+
+- **Nguyên nhân 1 — dòng tổng:** `build_workbook` luôn ghi
+  `=SUM(C7:C6)` khi 0 hộ (dải ngược, tự tham chiếu chính ô). Đã sửa:
+  0 hộ thì dòng tổng ghi số 0, không ghi công thức; `verify_workbook`
+  chấp nhận số 0 khi 0 hộ và kiểm tra mọi công thức SUM không được
+  tham chiếu tới chính dòng tổng.
+- **Nguyên nhân 2 — 0 hộ:** pipeline chỉ tạo dòng từ Excel nguồn hoặc
+  text layer của PDF; PDF quét không có cả hai nên ra 0 dòng. Đã sửa:
+  mỗi dải dòng trong vùng dữ liệu (18–32pt, ≥10 dải/trang để loại tờ
+  tổng hợp) thành một dòng giữ chỗ (nguồn `pdf-band`) để nhập
+  STT/tên/tiền tay ở màn hình duyệt. Màn hình duyệt thêm ô nhập STT,
+  nút **Xóa dòng này** (dải giả, dòng CỘNG) và nút **Thêm hộ mới**
+  (trang ít hộ, dòng bị thiếu); dòng đã xóa được ghi lại theo
+  (ấp, trang, dải) nên bấm Xử lý lại không tạo lại.
+- **Kiểm chứng bằng PDF Tây Lộc thật (chỉ PDF, không Excel): 522 dòng
+  giữ chỗ** (16 trang: 21+32+35+32+36+31+36+32+36+32+36+31+36+32+31+33),
+  486 ảnh chữ ký cột T, file xuất 17,3MB, `verify_workbook` ĐẠT,
+  0 công thức tự tham chiếu. So với 424 hộ thật: thừa ~98 dòng
+  (16 dòng CỘNG + ~82 dải giả ở tiêu đề) — người dùng xóa tay ở màn
+  hình duyệt. Chữ viết tay vẫn phải nhập tay từng ô.
+- **Test mới (13 passed):** workbook 0 hộ không circular reference;
+  PDF quét chỉ có ảnh tạo dòng giữ chỗ, đúng thứ tự trang/dòng;
+  xóa dòng giữ chỗ rồi chạy lại không tạo lại; AppTest web với PDF
+  quét: 39 dòng giữ chỗ, xuất file không circular reference.
+
+## 5. Môi trường kiểm thử
 
 - Python 3.12.3, PyMuPDF 2.1, openpyxl, Pillow, numpy, streamlit 1.67.0,
   pytest (Linux VM).

@@ -25,7 +25,8 @@ from .excel_source import read_source_excel
 from .export import build_workbook, save_workbook, verify_workbook
 from .layout import FIRST_DATA_ROW
 from .matcher import match_rows, merge_pair
-from .models import HouseholdRow, PageInfo, Provenance, ReviewNote, RunStats
+from .models import (HouseholdRow, PageInfo, Provenance, ReviewNote,
+                     RowStatus, RunStats)
 from .pdf_tools import fingerprint
 from .store import Store
 
@@ -75,11 +76,15 @@ def scan_dossier(folder: str | Path) -> list[HamletDossier]:
 
 
 def pdf_rows_from_text_grid(pdf_path: Path,
-                            reversed_order: bool = False) -> tuple[list[HouseholdRow], list[PageInfo]]:
-    """Đọc các dòng hộ từ PDF có text layer (dạng form điện tử).
+                            reversed_order: bool = False,
+                            deleted: set[tuple[int, int]] | frozenset = frozenset()
+                            ) -> tuple[list[HouseholdRow], list[PageInfo]]:
+    """Đọc các dòng hộ từ PDF.
 
-    Với PDF quét (không text layer) trả về rỗng — các dòng sẽ do người
-    dùng nhập/đọc tay ở màn hình duyệt, chữ ký vẫn cắt được theo lưới.
+    PDF có text layer: đọc STT/tên theo lưới. PDF quét (không text
+    layer): tạo một dòng giữ chỗ cho mỗi dải dòng trong vùng dữ liệu
+    (nguồn 'pdf-band') để người dùng nhập tay ở màn hình duyệt.
+    `deleted`: các (trang, chỉ số dải) người dùng đã xóa — không tạo lại.
     """
     import fitz
     doc = fitz.open(pdf_path)
@@ -91,8 +96,9 @@ def pdf_rows_from_text_grid(pdf_path: Path,
     for pageno in order:
         page = doc[pageno]
         info = next((i for i in infos if i.number == pageno + 1), None)
-        if info is None or info.kind != "danh_sach":
+        if info is None or info.kind not in ("danh_sach", "quet"):
             continue
+        n_text_rows = 0
         for g in pdf_tools.extract_text_grid(page):
             cells = g["cells"]
             if not cells or not any(c.strip() for c in cells):
@@ -112,6 +118,29 @@ def pdf_rows_from_text_grid(pdf_path: Path,
             row.sources["pdf"] = Provenance(
                 "pdf-text", f"PDF tr.{pageno + 1}, dòng {g['row']}")
             rows.append(row)
+            n_text_rows += 1
+        if n_text_rows == 0:
+            # PDF quét (không text layer): không đọc được chữ, nhưng lưới
+            # kẻ vẫn dò được — tạo một dòng giữ chỗ cho mỗi dải trong
+            # vùng dữ liệu để người dùng nhập tay ở màn hình duyệt.
+            # Dải cuối vùng dữ liệu thường là dòng CỘNG, cũng giữ lại
+            # để khỏi mất hộ khi trang không có dòng CỘNG (xóa tay sau).
+            bands = pdf_tools.row_bands(page)
+            start, end = pdf_tools.data_band_range(bands)
+            if end - start < 10:
+                continue  # không phải trang danh sách (vd tờ tổng hợp
+                # chỉ có vài dòng) — không tạo dòng giữ chỗ
+            for band_idx in range(start, end):
+                if (pageno + 1, band_idx) in deleted:
+                    continue  # người dùng đã xóa dòng này, không tạo lại
+                prow = HouseholdRow(
+                    pdf_page=pageno + 1, pdf_row=band_idx,
+                    status=RowStatus.NEEDS_REVIEW)
+                prow.sources["pdf"] = Provenance(
+                    "pdf-band",
+                    f"PDF tr.{pageno + 1}, dòng {band_idx + 1} — "
+                    "dòng giữ chỗ từ lưới kẻ, nhập tay từ ảnh")
+                rows.append(prow)
     doc.close()
     return rows, infos
 
@@ -165,7 +194,9 @@ def process_hamlet(dossier: HamletDossier, store: Store | None = None,
             store.save_file(str(dossier.pdf_path), fp, "pdf",
                             dossier.pdf_path.stat().st_mtime)
         pdf_rows, result.pages = pdf_rows_from_text_grid(
-            dossier.pdf_path, dossier.reversed_pdf)
+            dossier.pdf_path, dossier.reversed_pdf,
+            deleted=(store.deleted_bands(dossier.name)
+                     if store is not None else frozenset()))
         stats.pages_processed = len(result.pages)
         stats.signatures_cropped = len(pdf_rows)
         # Trang tổng hợp: đọc tổng số hộ + tổng ghi tay của ấp.
@@ -199,14 +230,14 @@ def process_hamlet(dossier: HamletDossier, store: Store | None = None,
         result.rows = sorted(
             merged,
             key=lambda r: (r.stt is None, r.stt if r.stt is not None else 0,
-                           r.row_id))
+                           r.pdf_page or 0, r.pdf_row or 0, r.row_id))
         if not pdf_rows:
             result.scope = result.scope or "unknown"
     elif excel_rows:
         result.rows = sorted(
             excel_rows,
             key=lambda r: (r.stt is None, r.stt if r.stt is not None else 0,
-                           r.row_id))
+                           r.pdf_page or 0, r.pdf_row or 0, r.row_id))
         # Không có PDF: phạm vi chỉ là gợi ý từ tên sheet, chưa xác minh được.
         result.notes.append(ReviewNote(
             column="phạm vi",
@@ -214,7 +245,24 @@ def process_hamlet(dossier: HamletDossier, store: Store | None = None,
                     "này là toàn bộ hộ dân hay chỉ hộ có xây dựng."),
             kind="pham_vi"))
     else:
-        result.rows = pdf_rows
+        result.rows = sorted(
+            pdf_rows,
+            key=lambda r: (r.stt is None, r.stt if r.stt is not None else 0,
+                           r.pdf_page or 0, r.pdf_row or 0, r.row_id))
+
+    # PDF quét: các dòng giữ chỗ từ lưới kẻ cần nhập tay toàn bộ.
+    n_band = sum(1 for r in result.rows
+                 if r.sources.get("pdf") is not None
+                 and r.sources["pdf"].kind == "pdf-band")
+    if n_band:
+        result.notes.append(ReviewNote(
+            column="nhập tay",
+            reason=(f"PDF quét không có text layer: đã tạo {n_band} dòng giữ "
+                    "chỗ theo lưới kẻ để nhập STT/tên/tiền tay ở màn hình "
+                    "duyệt. Dòng cuối mỗi trang có thể là dòng CỘNG (không "
+                    "phải hộ) và một vài dòng ở tiêu đề có thể là dải giả — "
+                    "xóa dòng đó ở màn hình duyệt nếu không phải hộ."),
+            kind="chua_chac"))
 
     # Kiểm tra số liệu.
     for row in result.rows:

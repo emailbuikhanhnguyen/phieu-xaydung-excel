@@ -251,6 +251,36 @@ def _fill_by_pitch(ys: list[float]) -> list[float]:
     return out
 
 
+def data_band_range(bands: list[tuple[float, float]]) -> tuple[int, int]:
+    """Chỉ số (start, end) các dải thuộc vùng dữ liệu của bảng.
+
+    Vùng dữ liệu là đoạn dài nhất ở cuối trang mà các dải kề nhau cách
+    nhau 18–32pt (bước dòng của bảng: phiếu thật ~21pt, dữ liệu giả
+    ~28pt). Dùng để tách dải hộ khỏi các
+    đường kẻ tiêu đề phía trên — các đường này cũng cách nhau ~21pt
+    nên một vài dải giả ở tiêu đề có thể lọt vào (người dùng xóa tay
+    ở màn hình duyệt).
+    Trả về (start, len(bands)) để cắt bands[start:]; (0, 0) khi không
+    tìm được đoạn nào.
+    """
+    if not bands:
+        return (0, 0)
+    ys = [b[0] for b in bands]
+    best_start, best_len = len(ys) - 1, 1
+    start, length = len(ys) - 1, 1
+    for i in range(len(ys) - 2, -1, -1):
+        if 18 <= ys[i + 1] - ys[i] <= 32:
+            length += 1
+            start = i
+        else:
+            if length > best_len:
+                best_start, best_len = start, length
+            start, length = i, 1
+    if length > best_len:
+        best_start, best_len = start, length
+    return (best_start, len(bands))
+
+
 def row_bands(page: fitz.Page, min_height: float = 12.0) -> list[tuple[float, float]]:
     """Các dải dòng (y0, y1) suy từ đường kẻ ngang.
 

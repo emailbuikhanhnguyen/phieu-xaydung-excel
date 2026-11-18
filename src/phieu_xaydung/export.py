@@ -107,7 +107,12 @@ def build_workbook(hamlet: str, rows: list[HouseholdRow],
         total_col, comp_cols = MONEY_LETTERS[which]
         for col in [total_col, *comp_cols]:
             c = ws[f"{col}{total_row}"]
-            c.value = f"=SUM({col}{FIRST_DATA_ROW}:{col}{total_row - 1})"
+            if total_row > FIRST_DATA_ROW:
+                c.value = f"=SUM({col}{FIRST_DATA_ROW}:{col}{total_row - 1})"
+            else:
+                # 0 hộ: không có dải nào để cộng — ghi 0 thay vì công thức
+                # =SUM(C7:C6) (vừa ngược dải vừa tự tham chiếu tới chính ô).
+                c.value = 0
             c.number_format = "#,##0"
             c.font = TOTAL_FONT
             c.alignment = RIGHT
@@ -178,8 +183,18 @@ def verify_workbook(path: str | Path) -> dict:
     else:
         for col in layout.MONEY_COLS:
             v = ws[f"{col}{total_row}"].value
-            if not (isinstance(v, str) and v.startswith("=SUM(")):
+            is_sum = isinstance(v, str) and v.startswith("=SUM(")
+            # 0 hộ: dòng tổng là số 0, không phải công thức.
+            if not is_sum and not (n_data == 0 and v == 0):
                 errors.append(f"Dòng tổng cột {col} không phải công thức SUM.")
+            if is_sum:
+                # Công thức tổng không được tham chiếu tới chính dòng tổng
+                # (lỗi circular reference gặp ngày 18/11 với file 0 hộ).
+                ref = v[len("=SUM("):].rstrip(")")
+                lo, _, hi = ref.partition(":")
+                if int(hi[1:]) >= total_row or int(lo[1:]) >= total_row:
+                    errors.append(
+                        f"Dòng tổng cột {col} tự tham chiếu ({v}).")
     bad_r = []
     bad_s = []
     for r in range(FIRST_DATA_ROW, (total_row or ws.max_row + 1)):

@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS notes(
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT, stats TEXT);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+-- Dòng người dùng đã xóa tay (dải giả, dòng CỘNG nhầm là hộ): định danh
+-- bằng (ấp, trang PDF, chỉ số dải) vì row_id của dòng giữ chỗ sinh lại
+-- mỗi lần xử lý. Chạy lại không tạo lại dòng đã xóa.
+CREATE TABLE IF NOT EXISTS deleted(
+  hamlet TEXT, pdf_page INTEGER, pdf_row INTEGER,
+  PRIMARY KEY(hamlet, pdf_page, pdf_row));
 """
 
 
@@ -118,6 +124,29 @@ class Store:
                            for k, v in json.loads(sources).items()}
             out.append(row)
         return out
+
+    def delete_row(self, row_id: str, hamlet: str = ""):
+        """Xóa hẳn một dòng (dải giả từ lưới quét, dòng CỘNG nhầm là hộ).
+
+        Ghi lại vị trí (ấp, trang, dải) để chạy lại không tạo lại dòng
+        đã xóa; các dòng không có vị trí PDF thì chỉ xóa khỏi bảng rows.
+        """
+        cur = self.conn.execute(
+            "SELECT pdf_page, pdf_row FROM rows WHERE row_id=?", (row_id,))
+        found = cur.fetchone()
+        if found and found[0] is not None and found[1] is not None and hamlet:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO deleted VALUES (?,?,?)",
+                (hamlet, found[0], found[1]))
+        self.conn.execute("DELETE FROM rows WHERE row_id=?", (row_id,))
+        self.conn.execute("DELETE FROM signatures WHERE row_id=?", (row_id,))
+        self.conn.commit()
+
+    def deleted_bands(self, hamlet: str) -> set[tuple[int, int]]:
+        """Các (trang PDF, chỉ số dải) người dùng đã xóa của một ấp."""
+        cur = self.conn.execute(
+            "SELECT pdf_page, pdf_row FROM deleted WHERE hamlet=?", (hamlet,))
+        return {(r[0], r[1]) for r in cur.fetchall()}
 
     def mark_recheck_for_file(self, path: str):
         """Nguồn đổi: các ô đã duyệt lấy từ file đó -> cần kiểm tra lại."""

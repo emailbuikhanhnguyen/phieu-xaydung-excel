@@ -190,3 +190,92 @@ def test_matcher_khong_ghep_sai_khi_ten_khac_nhau():
     pairs, _, _, notes = match_rows(excel, pdf)
     assert len(pairs) == 1
     assert pairs[0][0].name == "Nguyễn Văn An"
+
+
+def _rasterize_pdf(src: Path, dst: Path, dpi: int = 150):
+    """Biến PDF có text layer thành PDF quét thuần ảnh (mô phỏng file scan
+    thật từ máy quét: không text, không vector, chỉ ảnh trang)."""
+    import fitz
+    doc = fitz.open(src)
+    out = fitz.open()
+    for page in doc:
+        pix = page.get_pixmap(dpi=dpi)
+        p = out.new_page(width=page.rect.width, height=page.rect.height)
+        p.insert_image(page.rect, pixmap=pix)
+    out.save(dst)
+    out.close()
+    doc.close()
+
+
+def test_workbook_0_ho_khong_circular_reference(tmp_path):
+    """Hồi quy lỗi 18/11: file xuất từ hồ sơ 0 hộ (chỉ PDF quét, tool chưa
+    tạo được dòng nào) báo circular reference vì dòng tổng ghi
+    =SUM(C7:C6) — vừa ngược dải vừa tự tham chiếu chính ô."""
+    from phieu_xaydung.export import save_workbook
+    wb = build_workbook("Tây Lộc", [], [])
+    path = tmp_path / "rong.xlsx"
+    save_workbook(wb, path)
+    check = verify_workbook(path)
+    assert check["ok"], check["errors"]
+    assert check["stats"]["so_hang_du_lieu"] == 0
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Danh sách hộ"]
+    total_row = check["stats"]["dong_tong"]
+    assert ws.cell(total_row, 2).value == "TỔNG CỘNG (0 HỘ)"
+    for col in ("C", "D", "H", "M", "Q"):
+        assert ws[f"{col}{total_row}"].value == 0
+    # Không còn công thức nào tự tham chiếu chính ô của nó.
+    for row in ws.iter_rows():
+        for c in row:
+            v = c.value
+            if isinstance(v, str) and v.startswith("=SUM("):
+                ref = v[len("=SUM("):].rstrip(")")
+                _, _, hi = ref.partition(":")
+                assert int(hi[1:]) < c.row
+    wb.close()
+
+
+def test_pdf_quet_chi_co_anh_tao_dong_giu_cho(tmp_path):
+    """Hồi quy lỗi 18/11: hồ sơ chỉ có PDF quét (không Excel nguồn) ra
+    0 hộ. Nay mỗi dải dòng trong vùng dữ liệu thành một dòng giữ chỗ
+    (nguồn pdf-band) để nhập tay ở màn hình duyệt."""
+    from phieu_xaydung.pipeline import HamletDossier
+    scan_pdf = tmp_path / "An-Binh-scan.pdf"
+    _rasterize_pdf(FIX / "An-Binh.pdf", scan_pdf)
+    d = HamletDossier(name="An Binh", pdf_path=scan_pdf, reversed_pdf=True)
+    result = process_hamlet(d)
+    # 3 trang danh sách, mỗi trang 11 hộ + 1 dòng CỘNG + 1 dải tiêu đề
+    # lọt vào vùng dữ liệu = 13 dòng giữ chỗ/trang.
+    assert len(result.rows) >= 32
+    assert all(r.sources["pdf"].kind == "pdf-band" for r in result.rows)
+    assert all(r.pdf_page is not None and r.pdf_row is not None
+               for r in result.rows)
+    # Thứ tự theo trang/dòng, không xáo theo row_id ngẫu nhiên.
+    keys = [(r.pdf_page, r.pdf_row) for r in result.rows]
+    assert keys == sorted(keys)
+    # Có ghi chú hướng dẫn nhập tay + xóa dải giả/dòng CỘNG.
+    assert any("dòng giữ chỗ" in n.reason and "dòng CỘNG" in n.reason
+               for n in result.notes)
+    path = export_hamlet(result, tmp_path)
+    check = verify_workbook(path)
+    assert check["ok"], check["errors"]
+    assert check["stats"]["so_hang_du_lieu"] == len(result.rows)
+
+
+def test_xoa_dong_giu_cho_chay_lai_khong_tao_lai(tmp_path):
+    """Dòng giữ chỗ đã xóa tay (dải giả, dòng CỘNG) không xuất hiện lại
+    khi bấm Xử lý tất cả lần nữa."""
+    from phieu_xaydung.pipeline import HamletDossier
+    scan_pdf = tmp_path / "An-Binh-scan.pdf"
+    _rasterize_pdf(FIX / "An-Binh.pdf", scan_pdf)
+    d = HamletDossier(name="An Binh", pdf_path=scan_pdf, reversed_pdf=True)
+    store = Store(tmp_path / "state.db")
+    r1 = process_hamlet(d, store=store)
+    victim = r1.rows[0]
+    store.delete_row(victim.row_id, "An Binh")
+    assert (victim.pdf_page, victim.pdf_row) in store.deleted_bands("An Binh")
+    r2 = process_hamlet(d, store=store)
+    assert len(r2.rows) == len(r1.rows) - 1
+    assert all((r.pdf_page, r.pdf_row) != (victim.pdf_page, victim.pdf_row)
+               for r in r2.rows)
+    store.close()

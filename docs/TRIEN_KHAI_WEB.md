@@ -21,6 +21,14 @@ Python hay tải repo về.
 Từ lần sau, mỗi lần push code mới lên nhánh `main`, Streamlit Cloud
 tự khởi động lại app với bản mới (có thể mất 1–2 phút).
 
+> **Lưu ý (lỗi gặp 18/11, phiếu PXD-001):** Streamlit Cloud chỉ git pull
+> rồi chạy lại script trong cùng tiến trình Python, nên module trong
+> `src/` có thể vẫn là bản cũ trong `sys.modules` — app đã tự nạp lại
+> module (xem khối `importlib.reload` đầu `app/streamlit_app.py`). Sau
+> khi merge một PR sửa code, bấm **Reboot app** một lần (trang quản trị
+> app → menu ⋮ → **Reboot app**), rồi kiểm tra số phiên bản hiện trên
+> app (đầu trang + sidebar) khớp với sha của `main`.
+
 ## 2. Kiểm tra sau khi triển khai
 
 1. Mở link app, chọn chế độ **Tải file lên (dùng trên web)**.

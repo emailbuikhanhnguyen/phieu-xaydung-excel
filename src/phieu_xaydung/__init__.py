@@ -5,43 +5,77 @@ Chạy cục bộ, không gọi API AI. Đọc trực tiếp Excel nguồn, dùn
 của PDF khi có, xử lý hình ảnh bằng code; chữ viết tay duyệt thủ công theo ô.
 """
 
+from __future__ import annotations
+
+import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 __version__ = "0.1.0"
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# Giờ VN cố định UTC+7 (không phụ thuộc tzdata của máy chủ).
+_VN_TZ = timezone(timedelta(hours=7))
 
-def _git_build() -> tuple[int, str] | None:
-    """(số commit, SHA ngắn) của HEAD — None khi không đọc được git.
 
-    Chạy `git` trên chính thư mục repo đang chứa code (bản deploy trên
-    Streamlit Cloud là một bản clone của repo nên vẫn có .git).
+def _git_output(args: list[str]) -> str | None:
+    """Chạy một lệnh git trong thư mục repo, trả về stdout đã strip.
+
+    None khi không có git, không có .git, hoặc lệnh lỗi.
     """
     try:
-        import subprocess
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[2]
-        count = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD"], cwd=root,
-            capture_output=True, text=True, timeout=10)
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=root,
-            capture_output=True, text=True, timeout=10)
-        if count.returncode == 0 and sha.returncode == 0:
-            return int(count.stdout.strip()), sha.stdout.strip()
+        r = subprocess.run(["git", *args], cwd=_REPO_ROOT,
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
     except Exception:
         pass
     return None
 
 
+def _git_build() -> dict | None:
+    """Thông tin bản dựng từ git: sha ngắn, số commit, ngày giờ commit.
+
+    Trả về None khi không đọc được git. Shallow clone (Streamlit Cloud có
+    thể chỉ clone 1 commit): `rev-list --count` luôn ra 1 nên không dùng
+    số đếm — chỉ lấy sha + ngày giờ commit.
+    """
+    sha = _git_output(["rev-parse", "--short", "HEAD"])
+    if not sha:
+        return None
+    shallow = _git_output(["rev-parse", "--is-shallow-repository"]) == "true"
+    when = None
+    ts = _git_output(["log", "-1", "--format=%ct"])
+    if ts:
+        try:
+            when = datetime.fromtimestamp(int(ts), tz=_VN_TZ).strftime(
+                "%d/%m/%Y %H:%M")
+        except (ValueError, OSError, OverflowError):
+            when = None
+    count = None
+    if not shallow:
+        c = _git_output(["rev-list", "--count", "HEAD"])
+        if c is not None:
+            try:
+                count = int(c)
+            except ValueError:
+                count = None
+    return {"sha": sha, "shallow": shallow, "when": when, "count": count}
+
+
 def build_version() -> str:
     """Số phiên bản hiển thị — tự tăng theo mỗi lần deploy.
 
-    Mỗi lần push lên main thêm ít nhất 1 commit nên số commit tăng theo
-    từng lần deploy: ``0.1.<số commit> (<sha ngắn>)``, vd ``0.1.5
-    (020a3d3)``. Khi không đọc được git (vd chạy từ bản copy không có
-    .git) thì trả về ``__version__``.
+    Git đầy đủ: ``0.1.<số commit> (<sha ngắn>) — <ngày giờ commit giờ VN>``
+    (mỗi lần push lên main thêm ít nhất 1 commit nên số này tăng theo).
+    Shallow clone: ``<sha ngắn> — <ngày giờ commit giờ VN>`` (không hiện
+    số đếm sai). Không đọc được git: trả về ``__version__``.
     """
     info = _git_build()
     if info is None:
         return __version__
-    count, sha = info
     base = __version__.rsplit(".", 1)[0]  # "0.1"
-    return f"{base}.{count} ({sha})"
+    when = f" — {info['when']}" if info.get("when") else ""
+    if info.get("count") is not None:
+        return f"{base}.{info['count']} ({info['sha']}){when}"
+    return f"{info['sha']}{when}"

@@ -281,26 +281,103 @@ def test_xoa_dong_giu_cho_chay_lai_khong_tao_lai(tmp_path):
     store.close()
 
 
-def test_phien_ban_tu_tang_theo_commit():
-    """Số phiên bản tự tăng theo mỗi lần deploy: 0.1.<số commit> (<sha>).
-    Không đọc được git thì về lại __version__."""
-    import subprocess
-    from phieu_xaydung import __version__, _git_build, build_version
-    info = _git_build()
-    assert info is not None  # chạy trong repo git
-    count, sha = info
-    assert count >= 4 and len(sha) >= 7
-    assert build_version() == f"0.1.{count} ({sha})"
-    # Đối chiếu độc lập bằng git: số commit phải khớp.
-    n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
-                       cwd=Path(__file__).resolve().parents[1],
-                       capture_output=True, text=True, check=True)
-    assert count == int(n.stdout.strip())
-    # Fallback khi không có git.
+def test_phien_ban_3_truong_hop(monkeypatch):
+    """build_version ở 3 trường hợp (mock subprocess.run):
+    git đầy đủ, shallow clone, không có git. PXD-001."""
+    from datetime import datetime, timedelta, timezone
     import phieu_xaydung
-    old = phieu_xaydung._git_build
-    phieu_xaydung._git_build = lambda: None
+    from phieu_xaydung import __version__, build_version
+
+    # 18/11/2026 15:32 giờ VN, cố định để kiểm tra chuỗi ngày giờ.
+    ts = int(datetime(2026, 11, 18, 15, 32,
+                      tzinfo=timezone(timedelta(hours=7))).timestamp())
+    when = "18/11/2026 15:32"
+
+    class R:
+        def __init__(self, out, code=0):
+            self.stdout = out
+            self.returncode = code
+
+    def make_fake_run(case):
+        def fake_run(cmd, **kwargs):
+            if case == "no_git":
+                raise FileNotFoundError("git not found")
+            if cmd[1] == "rev-parse" and "--short" in cmd:
+                return R("abc1234\n")
+            if cmd[1] == "rev-parse" and "--is-shallow-repository" in cmd:
+                return R("true\n" if case == "shallow" else "false\n")
+            if cmd[1] == "rev-list":
+                return R("7\n")
+            if cmd[1] == "log":
+                return R(f"{ts}\n")
+            raise AssertionError(f"lenh git khong duoc mock: {cmd}")
+        return fake_run
+
+    monkeypatch.setattr(phieu_xaydung.subprocess, "run",
+                        make_fake_run("full"))
+    assert build_version() == f"0.1.7 (abc1234) — {when}"
+
+    monkeypatch.setattr(phieu_xaydung.subprocess, "run",
+                        make_fake_run("shallow"))
+    # Shallow: không hiện số đếm sai, chỉ sha + ngày giờ.
+    assert build_version() == f"abc1234 — {when}"
+
+    monkeypatch.setattr(phieu_xaydung.subprocess, "run",
+                        make_fake_run("no_git"))
+    assert build_version() == __version__
+
+
+def test_phien_ban_that_khop_git_that():
+    """Kiểm tra nhẹ với git thật (không mock): số phiên bản bắt đầu bằng
+    0.1. và chứa đúng sha ngắn của HEAD."""
+    import subprocess
+    from phieu_xaydung import build_version
+    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                         cwd=Path(__file__).resolve().parents[1],
+                         capture_output=True, text=True,
+                         check=True).stdout.strip()
+    v = build_version()
+    assert v.startswith("0.1.") and sha in v
+
+
+def test_reload_lay_ban_moi_khi_file_doi(tmp_path, monkeypatch):
+    """PXD-001: mô phỏng deploy mới trong cùng tiến trình — file trên đĩa
+    đổi nhưng sys.modules còn bản cũ; chạy đúng trình tự nạp lại của app
+    (module con trước, package sau) thì code mới phải có hiệu lực."""
+    import importlib
+    import shutil
+    import sys
+    src = Path(__file__).resolve().parents[1] / "src" / "phieu_xaydung"
+    copy = tmp_path / "phieu_xaydung"
+    shutil.copytree(src, copy)
+    saved = {k: v for k, v in sys.modules.items()
+             if k == "phieu_xaydung" or k.startswith("phieu_xaydung.")}
+    for k in saved:
+        del sys.modules[k]
+    monkeypatch.syspath_prepend(str(tmp_path))
     try:
-        assert build_version() == __version__
+        import phieu_xaydung
+        assert phieu_xaydung.__version__ == "0.1.0"
+        # Giả lập deploy mới: sửa file trên đĩa.
+        init = copy / "__init__.py"
+        init.write_text(init.read_text(encoding="utf-8").replace(
+            '__version__ = "0.1.0"', '__version__ = "9.9.9"'),
+            encoding="utf-8")
+        # Không nạp lại: vẫn bản cũ (đúng lỗi gặp trên Streamlit Cloud).
+        assert phieu_xaydung.__version__ == "0.1.0"
+        # Đúng trình tự của app: module con trước, package sau.
+        from phieu_xaydung import (excel_source, export, layout, matcher,
+                                   models, pdf_tools, pipeline, store,
+                                   validate)
+        for _mod in (models, pdf_tools, layout, excel_source, matcher,
+                     validate, export, store, pipeline):
+            importlib.reload(_mod)
+        importlib.reload(phieu_xaydung)
+        assert phieu_xaydung.__version__ == "9.9.9"
+        from phieu_xaydung import build_version
+        assert build_version().startswith("9.9.")
     finally:
-        phieu_xaydung._git_build = old
+        for k in list(sys.modules):
+            if k == "phieu_xaydung" or k.startswith("phieu_xaydung."):
+                del sys.modules[k]
+        sys.modules.update(saved)

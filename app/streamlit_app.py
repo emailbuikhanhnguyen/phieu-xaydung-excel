@@ -30,17 +30,35 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 import fitz  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from phieu_xaydung import __version__, build_version  # noqa: E402
-from phieu_xaydung import pdf_tools  # noqa: E402
+# Streamlit Cloud chỉ git pull rồi chạy lại script trong cùng tiến trình
+# Python: module trong src/ đã nằm trong sys.modules từ lần deploy trước
+# nên `from phieu_xaydung import ...` sẽ lấy bản CŨ mà không đọc lại file
+# (lỗi ImportError sau deploy 684e52b5). Nạp lại tường minh từng module
+# con theo thứ tự phụ thuộc, rồi mới nạp lại package, để bản deploy sau
+# không bị trộn code cũ với mới.
+import importlib  # noqa: E402
+import phieu_xaydung  # noqa: E402
+from phieu_xaydung import (  # noqa: E402
+    excel_source, export, layout, matcher, models, pdf_tools, pipeline,
+    store, validate)
+for _mod in (models, pdf_tools, layout, excel_source, matcher, validate,
+             export, store, pipeline):
+    importlib.reload(_mod)
+importlib.reload(phieu_xaydung)
+
+from phieu_xaydung import build_version  # noqa: E402
 from phieu_xaydung.export import verify_workbook  # noqa: E402
 from phieu_xaydung.models import HouseholdRow, Provenance, RowStatus  # noqa: E402
 from phieu_xaydung.pipeline import (  # noqa: E402
     export_hamlet, process_hamlet, scan_dossier)
 from phieu_xaydung.store import Store  # noqa: E402
 
+_VERSION = build_version()  # tính 1 lần khi app khởi động
+
 st.set_page_config(page_title="Phiếu xây dựng -> Excel", layout="wide")
 st.title("Phiếu xây dựng -> Excel")
-st.caption(f"Phiên bản {build_version()} — mọi xử lý chạy bằng code, 0 lần gọi AI.")
+st.caption(f"Phiên bản {_VERSION} — mọi xử lý chạy bằng code, 0 lần gọi AI.")
+st.sidebar.write(f"Phiên bản {_VERSION}")
 
 for key, default in (("work_dir", ""), ("results", {}),
                      ("review_idx", {}), ("dossiers", []),
